@@ -1,6 +1,7 @@
 ﻿using Azure.Storage;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 using ImageResizeWebApp.Models;
 using Microsoft.AspNetCore.Http;
 using SixLabors.ImageSharp;
@@ -96,24 +97,62 @@ namespace ImageResizeWebApp.Helpers
         {
             List<string> thumbnailUrls = new List<string>();
 
-            // Create the container URI
+            // Create the container URI and service URI
             var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ThumbnailContainer}");
+            var serviceUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net");
 
             BlobContainerClient containerClient;
+            BlobServiceClient serviceClient;
+            
             if (string.IsNullOrEmpty(_storageConfig.AccountKey))
             {
-                containerClient = new BlobContainerClient(containerUri, new Azure.Identity.DefaultAzureCredential());
+                var credential = new Azure.Identity.DefaultAzureCredential();
+                containerClient = new BlobContainerClient(containerUri, credential);
+                serviceClient = new BlobServiceClient(serviceUri, credential);
             }
             else
             {
                 var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
                 containerClient = new BlobContainerClient(containerUri, storageCredentials);
+                serviceClient = new BlobServiceClient(serviceUri, storageCredentials);
             }
+
             if (await containerClient.ExistsAsync())
             {
+                // Set the expiry time for SAS tokens (e.g., 1 hour from now)
+                var sasBuilder = new BlobSasBuilder
+                {
+                    BlobContainerName = _storageConfig.ThumbnailContainer,
+                    Resource = "c", // 'c' for container
+                    StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5), // Start 5 minutes ago to account for clock skew
+                    ExpiresOn = DateTimeOffset.UtcNow.AddHours(1)
+                };
+                sasBuilder.SetPermissions(BlobContainerSasPermissions.Read);
+
                 await foreach (BlobItem blobItem in containerClient.GetBlobsAsync())
                 {
-                    thumbnailUrls.Add(containerClient.Uri + "/" + blobItem.Name);
+                    // Get a reference to the blob
+                    var blobClient = containerClient.GetBlobClient(blobItem.Name);
+
+                    string sasToken;
+                    if (string.IsNullOrEmpty(_storageConfig.AccountKey))
+                    {
+                        // For Managed Identity scenarios, we need to get a user delegation key
+                        var userDelegationKey = await serviceClient.GetUserDelegationKeyAsync(
+                            DateTimeOffset.UtcNow.AddMinutes(-5),
+                            DateTimeOffset.UtcNow.AddHours(1));
+                        sasToken = sasBuilder.ToSasQueryParameters(userDelegationKey.Value, _storageConfig.AccountName).ToString();
+                    }
+                    else
+                    {
+                        // For storage key scenarios
+                        sasToken = sasBuilder.ToSasQueryParameters(
+                            new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey))
+                            .ToString();
+                    }
+
+                    // Generate the full URL with SAS token
+                    thumbnailUrls.Add(blobClient.Uri + "?" + sasToken);
                 }
             }
 
