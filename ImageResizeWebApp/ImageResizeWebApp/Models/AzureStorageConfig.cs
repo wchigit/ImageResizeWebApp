@@ -3,7 +3,6 @@
     {
         public required string AccountName { get; set; }
         public string? AccountKey { get; set; }
-        public string? ManagedIdentityClientId { get; set; }
         public required string ImageContainer { get; set; }
         public required string ThumbnailContainer { get; set; }
     }

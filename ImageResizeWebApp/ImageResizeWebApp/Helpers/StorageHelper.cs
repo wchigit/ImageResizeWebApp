@@ -39,21 +39,14 @@ namespace ImageResizeWebApp.Helpers
 
             BlobContainerClient containerClient;
             BlobContainerClient thumbnailContainerClient;
-            try
+            if (string.IsNullOrEmpty(_storageConfig.AccountKey))
             {
-                // Try managed identity first
                 var credential = new Azure.Identity.DefaultAzureCredential();
                 containerClient = new BlobContainerClient(containerUri, credential);
                 thumbnailContainerClient = new BlobContainerClient(thumbnailContainerUri, credential);
-                // Test the connection
-                await containerClient.GetPropertiesAsync();
             }
-            catch
+            else
             {
-                // Fall back to account key if managed identity fails
-                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
-                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
-
                 var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
                 containerClient = new BlobContainerClient(containerUri, storageCredentials);
                 thumbnailContainerClient = new BlobContainerClient(thumbnailContainerUri, storageCredentials);
@@ -107,19 +100,12 @@ namespace ImageResizeWebApp.Helpers
             var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ThumbnailContainer}");
 
             BlobContainerClient containerClient;
-            try
+            if (string.IsNullOrEmpty(_storageConfig.AccountKey))
             {
-                // Try managed identity first
                 containerClient = new BlobContainerClient(containerUri, new Azure.Identity.DefaultAzureCredential());
-                // Test the connection
-                await containerClient.GetPropertiesAsync();
             }
-            catch
+            else
             {
-                // Fall back to account key if managed identity fails
-                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
-                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
-
                 var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
                 containerClient = new BlobContainerClient(containerUri, storageCredentials);
             }

@@ -32,11 +32,11 @@ namespace ImageResizeWebApp.Controllers
                 if (files.Count == 0)
                     return BadRequest("No files received from the upload");
 
-                if (storageConfig.AccountName == string.Empty || (storageConfig.AccountKey == string.Empty && storageConfig.ManagedIdentityClientId == string.Empty))
-                    return BadRequest("sorry, can't retrieve your azure storage details from appsettings.js, make sure that you add azure storage details there");
+                if (string.IsNullOrEmpty(storageConfig.AccountName))
+                    return BadRequest("Storage account name is not configured.");
 
-                if (storageConfig.ImageContainer == string.Empty)
-                    return BadRequest("Please provide a name for your image container in the azure blob storage");
+                if (string.IsNullOrEmpty(storageConfig.ImageContainer))
+                    return BadRequest("Image container name is not configured.");
 
                 foreach (var formFile in files)
                 {
@@ -73,20 +73,19 @@ namespace ImageResizeWebApp.Controllers
         }
 
         // GET /api/images/thumbnails
-        // Storage account needs set anonymous access level to allow blob read for thumbnails container
         [HttpGet("thumbnails")]
         public async Task<IActionResult> GetThumbNails()
         {
             try
             {
-                if (storageConfig.AccountKey == string.Empty || storageConfig.AccountName == string.Empty)
-                    return BadRequest("Sorry, can't retrieve your Azure storage details from appsettings.js, make sure that you add Azure storage details there.");
+                if (string.IsNullOrEmpty(storageConfig.AccountName))
+                    return BadRequest("Storage account name is not configured.");
 
-                if (storageConfig.ImageContainer == string.Empty)
-                    return BadRequest("Please provide a name for your image container in Azure blob storage.");
+                if (string.IsNullOrEmpty(storageConfig.ThumbnailContainer))
+                    return BadRequest("Thumbnail container name is not configured.");
 
                 List<string> thumbnailUrls = await StorageHelper.GetThumbNailUrls(storageConfig);
-                return new ObjectResult(thumbnailUrls);            
+                return new ObjectResult(thumbnailUrls);
             }
             catch (Exception ex)
             {
