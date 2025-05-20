@@ -32,7 +32,7 @@ namespace ImageResizeWebApp.Controllers
                 if (files.Count == 0)
                     return BadRequest("No files received from the upload");
 
-                if (storageConfig.AccountKey == string.Empty || storageConfig.AccountName == string.Empty)
+                if (storageConfig.AccountName == string.Empty || (storageConfig.AccountKey == string.Empty && storageConfig.ManagedIdentityClientId == string.Empty))
                     return BadRequest("sorry, can't retrieve your azure storage details from appsettings.js, make sure that you add azure storage details there");
 
                 if (storageConfig.ImageContainer == string.Empty)
