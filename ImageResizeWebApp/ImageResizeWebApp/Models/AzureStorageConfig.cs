@@ -1,10 +1,10 @@
 ﻿namespace ImageResizeWebApp.Models
-{
-    public class AzureStorageConfig
+{    public class AzureStorageConfig
     {
-        public string AccountName { get; set; }
-        public string AccountKey { get; set; }
-        public string ImageContainer { get; set; }
-        public string ThumbnailContainer { get; set; }
+        public required string AccountName { get; set; }
+        public string? AccountKey { get; set; }
+        public required string ImageContainer { get; set; }
+        public required string ThumbnailContainer { get; set; }
+        public bool UseManagedIdentity { get; set; }
     }
 }
