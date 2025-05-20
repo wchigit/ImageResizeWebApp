@@ -24,28 +24,33 @@ namespace ImageResizeWebApp.Helpers
             string[] formats = new string[] { ".jpg", ".png", ".gif", ".jpeg" };
 
             return formats.Any(item => file.FileName.EndsWith(item, StringComparison.OrdinalIgnoreCase));
-        }
-
-        public static async Task<bool> UploadFileToStorage(Stream fileStream, string fileName,
+        }        public static async Task<bool> UploadFileToStorage(Stream fileStream, string fileName,
                                                             AzureStorageConfig _storageConfig)
         {
-            // Create a URI to the blob
-            Uri blobUri = new Uri("https://" +
-                                  _storageConfig.AccountName +
-                                  ".blob.core.windows.net/" +
-                                  _storageConfig.ImageContainer +
-                                  "/" + fileName);
+            // Create the container URI
+            var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ImageContainer}");
 
-            // Create StorageSharedKeyCredentials object by reading
-            // the values from the configuration (appsettings.json)
-            StorageSharedKeyCredential storageCredentials =
-                new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+            BlobContainerClient containerClient;
+            try
+            {
+                // Try managed identity first
+                containerClient = new BlobContainerClient(containerUri, new Azure.Identity.DefaultAzureCredential());
+                // Test the connection
+                await containerClient.GetPropertiesAsync();
+            }
+            catch
+            {
+                // Fall back to account key if managed identity fails
+                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
+                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
 
-            // Create the blob client.
-            BlobClient blobClient = new BlobClient(blobUri, storageCredentials);
+                var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+                containerClient = new BlobContainerClient(containerUri, storageCredentials);
+            }
 
-            // Upload the file
-            await blobClient.UploadAsync(fileStream);
+            // Get blob client and upload
+            var blobClient = containerClient.GetBlobClient(fileName);
+            await blobClient.UploadAsync(fileStream, overwrite: true);
 
             return await Task.FromResult(true);
         }
@@ -54,24 +59,35 @@ namespace ImageResizeWebApp.Helpers
         {
             List<string> thumbnailUrls = new List<string>();
 
-            // Create a URI to the storage account
-            Uri accountUri = new Uri("https://" + _storageConfig.AccountName + ".blob.core.windows.net/");
+            // Create the container URI
+            var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ThumbnailContainer}");
 
-            // Create BlobServiceClient from the account URI
-            BlobServiceClient blobServiceClient = new BlobServiceClient(accountUri);
-
-            // Get reference to the container
-            BlobContainerClient container = blobServiceClient.GetBlobContainerClient(_storageConfig.ThumbnailContainer);
-
-            if (container.Exists())
+            BlobContainerClient containerClient;
+            try
             {
-                foreach (BlobItem blobItem in container.GetBlobs())
+                // Try managed identity first
+                containerClient = new BlobContainerClient(containerUri, new Azure.Identity.DefaultAzureCredential());
+                // Test the connection
+                await containerClient.GetPropertiesAsync();
+            }
+            catch
+            {
+                // Fall back to account key if managed identity fails
+                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
+                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
+
+                var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+                containerClient = new BlobContainerClient(containerUri, storageCredentials);
+            }
+            if (await containerClient.ExistsAsync())
+            {
+                await foreach (BlobItem blobItem in containerClient.GetBlobsAsync())
                 {
-                    thumbnailUrls.Add(container.Uri + "/" + blobItem.Name);
+                    thumbnailUrls.Add(containerClient.Uri + "/" + blobItem.Name);
                 }
             }
 
-            return await Task.FromResult(thumbnailUrls);
+            return thumbnailUrls;
         }
     }
 }
