@@ -3,6 +3,8 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using ImageResizeWebApp.Models;
 using Microsoft.AspNetCore.Http;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,6 +15,8 @@ namespace ImageResizeWebApp.Helpers
 {
     public static class StorageHelper
     {
+        private const int ThumbnailWidth = 100;
+        private const int ThumbnailHeight = 100;
 
         public static bool IsImage(IFormFile file)
         {
@@ -29,49 +33,105 @@ namespace ImageResizeWebApp.Helpers
         public static async Task<bool> UploadFileToStorage(Stream fileStream, string fileName,
                                                             AzureStorageConfig _storageConfig)
         {
-            // Create a URI to the blob
-            Uri blobUri = new Uri("https://" +
-                                  _storageConfig.AccountName +
-                                  ".blob.core.windows.net/" +
-                                  _storageConfig.ImageContainer +
-                                  "/" + fileName);
+            // Create the container URI
+            var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ImageContainer}");
+            var thumbnailContainerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ThumbnailContainer}");
 
-            // Create StorageSharedKeyCredentials object by reading
-            // the values from the configuration (appsettings.json)
-            StorageSharedKeyCredential storageCredentials =
-                new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+            BlobContainerClient containerClient;
+            BlobContainerClient thumbnailContainerClient;
+            try
+            {
+                // Try managed identity first
+                var credential = new Azure.Identity.DefaultAzureCredential();
+                containerClient = new BlobContainerClient(containerUri, credential);
+                thumbnailContainerClient = new BlobContainerClient(thumbnailContainerUri, credential);
+                // Test the connection
+                await containerClient.GetPropertiesAsync();
+            }
+            catch
+            {
+                // Fall back to account key if managed identity fails
+                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
+                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
 
-            // Create the blob client.
-            BlobClient blobClient = new BlobClient(blobUri, storageCredentials);
+                var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+                containerClient = new BlobContainerClient(containerUri, storageCredentials);
+                thumbnailContainerClient = new BlobContainerClient(thumbnailContainerUri, storageCredentials);
+            }
 
-            // Upload the file
-            await blobClient.UploadAsync(fileStream);
+            // Create containers if they don't exist
+            await containerClient.CreateIfNotExistsAsync();
+            if (!string.IsNullOrEmpty(_storageConfig.ThumbnailContainer))
+            {
+                await thumbnailContainerClient.CreateIfNotExistsAsync();
+            }
 
-            return await Task.FromResult(true);
+            // Upload original image
+            var blobClient = containerClient.GetBlobClient(fileName);
+            await blobClient.UploadAsync(fileStream, overwrite: true);
+
+            // Generate and upload thumbnail if thumbnail container is configured
+            if (!string.IsNullOrEmpty(_storageConfig.ThumbnailContainer))
+            {
+                // Reset stream position for reading
+                fileStream.Position = 0;
+
+                // Generate thumbnail
+                using (var image = await Image.LoadAsync(fileStream))
+                {
+                    var thumbnailStream = new MemoryStream();
+                    
+                    // Clone and resize the image
+                    image.Mutate(x => x.Resize(new ResizeOptions
+                    {
+                        Size = new Size(ThumbnailWidth, ThumbnailHeight),
+                        Mode = ResizeMode.Max
+                    }));                    // Save to stream as PNG
+                    await image.SaveAsPngAsync(thumbnailStream);
+                    thumbnailStream.Position = 0;
+
+                    // Upload thumbnail
+                    var thumbnailBlobClient = thumbnailContainerClient.GetBlobClient(fileName);
+                    await thumbnailBlobClient.UploadAsync(thumbnailStream, overwrite: true);
+                }
+            }
+
+            return true;
         }
 
         public static async Task<List<string>> GetThumbNailUrls(AzureStorageConfig _storageConfig)
         {
             List<string> thumbnailUrls = new List<string>();
 
-            // Create a URI to the storage account
-            Uri accountUri = new Uri("https://" + _storageConfig.AccountName + ".blob.core.windows.net/");
+            // Create the container URI
+            var containerUri = new Uri($"https://{_storageConfig.AccountName}.blob.core.windows.net/{_storageConfig.ThumbnailContainer}");
 
-            // Create BlobServiceClient from the account URI
-            BlobServiceClient blobServiceClient = new BlobServiceClient(accountUri);
-
-            // Get reference to the container
-            BlobContainerClient container = blobServiceClient.GetBlobContainerClient(_storageConfig.ThumbnailContainer);
-
-            if (container.Exists())
+            BlobContainerClient containerClient;
+            try
             {
-                foreach (BlobItem blobItem in container.GetBlobs())
+                // Try managed identity first
+                containerClient = new BlobContainerClient(containerUri, new Azure.Identity.DefaultAzureCredential());
+                // Test the connection
+                await containerClient.GetPropertiesAsync();
+            }
+            catch
+            {
+                // Fall back to account key if managed identity fails
+                if (string.IsNullOrEmpty(_storageConfig.AccountKey))
+                    throw new InvalidOperationException("No valid authentication method available. Configure either Managed Identity or Account Key.");
+
+                var storageCredentials = new StorageSharedKeyCredential(_storageConfig.AccountName, _storageConfig.AccountKey);
+                containerClient = new BlobContainerClient(containerUri, storageCredentials);
+            }
+            if (await containerClient.ExistsAsync())
+            {
+                await foreach (BlobItem blobItem in containerClient.GetBlobsAsync())
                 {
-                    thumbnailUrls.Add(container.Uri + "/" + blobItem.Name);
+                    thumbnailUrls.Add(containerClient.Uri + "/" + blobItem.Name);
                 }
             }
 
-            return await Task.FromResult(thumbnailUrls);
+            return thumbnailUrls;
         }
     }
 }

@@ -73,6 +73,7 @@ namespace ImageResizeWebApp.Controllers
         }
 
         // GET /api/images/thumbnails
+        // Storage account needs set anonymous access level to allow blob read for thumbnails container
         [HttpGet("thumbnails")]
         public async Task<IActionResult> GetThumbNails()
         {
